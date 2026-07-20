@@ -26,11 +26,25 @@ mkdir -p "$SP/vllm/entrypoints/openai"
 : > "$SP/vllm/entrypoints/__init__.py"
 : > "$SP/vllm/entrypoints/openai/__init__.py"
 cat > "$SP/vllm/entrypoints/openai/api_server.py" <<'PYEOF'
-# Shim: the Viettel portal forces `python3 -m vllm.entrypoints.openai.api_server`.
-# Re-exec SGLang's server with the same flags so DSpark speculative decoding runs.
+# Shim: the Viettel portal forces `python3 -m vllm.entrypoints.openai.api_server`
+# AND injects vLLM-only flags (e.g. --disable-uvicorn-access-log). Drop any flag
+# SGLang does not recognize, then re-exec SGLang's server so DSpark runs.
 import sys, os
+_args = sys.argv[1:]
+try:
+    import argparse
+    from sglang.srt.server_args import ServerArgs
+    _p = argparse.ArgumentParser()
+    ServerArgs.add_cli_args(_p)
+    _, _unknown = _p.parse_known_args(_args)
+    _drop = set(_unknown)
+    _args = [a for a in _args if a not in _drop]
+except BaseException:
+    _deny = ("--disable-uvicorn-access-log", "--disable-log-requests",
+             "--disable-fastapi-docs", "--uvicorn-log-level", "--disable-log-stats")
+    _args = [a for a in _args if a not in _deny and not any(a.startswith(d + "=") for d in _deny)]
 if __name__ == "__main__":
-    os.execvp("python3", ["python3", "-m", "sglang.launch_server"] + sys.argv[1:])
+    os.execvp("python3", ["python3", "-m", "sglang.launch_server"] + _args)
 PYEOF
 python3 -c 'import vllm.entrypoints.openai.api_server as m; print("shim import ok:", m.__file__)'
 
